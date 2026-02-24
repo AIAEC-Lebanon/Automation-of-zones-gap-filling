@@ -170,8 +170,10 @@ def classify_label(
     zones: list[dict],
     retries: int = 1,
 ) -> dict:
-    if not label.strip() or not zones:
-        return _make_result("not_found", [], zones)
+    if not zones:
+        return _make_result("not_found_location", [], zones)
+    if not label.strip():
+        return _make_result("not_found_zone", [], zones)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -196,7 +198,9 @@ def classify_label(
             # Hallucination guard
             verified_codes = [c for c in claimed_codes if c in valid_codes]
             if status == "resolved" and not verified_codes:
-                status = "not_found"
+                status = "not_found_zone"
+            elif status == "not_found":
+                status = "not_found_zone"
 
             return _make_result(status, verified_codes, zones)
 
@@ -231,7 +235,8 @@ def save_outputs(output_df: pd.DataFrame, elapsed: float) -> None:
 
     total = len(output_df)
     resolved = (output_df["match_status"] == "resolved").sum()
-    not_found = (output_df["match_status"] == "not_found").sum()
+    no_location = (output_df["match_status"] == "not_found_location").sum()
+    no_match = (output_df["match_status"] == "not_found_zone").sum()
     errors = (output_df["match_status"] == "error").sum()
 
     lines = [
@@ -243,10 +248,11 @@ def save_outputs(output_df: pd.DataFrame, elapsed: float) -> None:
         "",
         "SUMMARY",
         "-" * 40,
-        f"Total rows : {total}",
-        f"Resolved   : {resolved}  ({100*resolved/total:.1f}%)" if total else "Resolved   : 0",
-        f"Not Found  : {not_found}  ({100*not_found/total:.1f}%)" if total else "Not Found  : 0",
-        f"Errors     : {errors}",
+        f"Total rows  : {total}",
+        f"Resolved    : {resolved}  ({100*resolved/total:.1f}%)" if total else "Resolved    : 0",
+        f"No Location : {no_location}  ({100*no_location/total:.1f}%)" if total else "No Location : 0",
+        f"No Match    : {no_match}  ({100*no_match/total:.1f}%)" if total else "No Match    : 0",
+        f"Errors      : {errors}",
     ]
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -271,7 +277,8 @@ def _esc(text: str) -> str:
 def build_stats_html(results: list, total_target: int, elapsed: float, done: bool) -> str:
     processed = len(results)
     resolved = sum(1 for r in results if r["match_status"] == "resolved")
-    not_found = sum(1 for r in results if r["match_status"] == "not_found")
+    no_location = sum(1 for r in results if r["match_status"] == "not_found_location")
+    no_match = sum(1 for r in results if r["match_status"] == "not_found_zone")
     errors = sum(1 for r in results if r["match_status"] == "error")
     pct = int(100 * processed / total_target) if total_target else 0
     status_label = "Complete" if done else f"Processing… {pct}%"
@@ -287,9 +294,13 @@ def build_stats_html(results: list, total_target: int, elapsed: float, done: boo
     <div style="font-size:26px;font-weight:700;color:#16a34a">{resolved}</div>
     <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">Resolved</div>
   </div>
+  <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:14px 20px;min-width:120px;text-align:center">
+    <div style="font-size:26px;font-weight:700;color:#7c3aed">{no_location}</div>
+    <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">No Location</div>
+  </div>
   <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 20px;min-width:120px;text-align:center">
-    <div style="font-size:26px;font-weight:700;color:#dc2626">{not_found}</div>
-    <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">Not Found</div>
+    <div style="font-size:26px;font-weight:700;color:#dc2626">{no_match}</div>
+    <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">No Match</div>
   </div>
   <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 20px;min-width:120px;text-align:center">
     <div style="font-size:26px;font-weight:700;color:#d97706">{errors}</div>
@@ -318,12 +329,18 @@ def build_table_html(results: list) -> str:
         if status == "resolved":
             row_bg = "#f0fdf4"
             badge = '<span style="background:#dcfce7;color:#15803d;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">RESOLVED</span>'
+        elif status == "not_found_location":
+            row_bg = "#f5f3ff"
+            badge = '<span style="background:#ede9fe;color:#6d28d9;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">NO LOCATION</span>'
+        elif status == "not_found_zone":
+            row_bg = "#fef2f2"
+            badge = '<span style="background:#fee2e2;color:#b91c1c;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">NO MATCH</span>'
         elif status == "error":
             row_bg = "#fffbeb"
             badge = '<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">ERROR</span>'
         else:
             row_bg = "#fef2f2"
-            badge = '<span style="background:#fee2e2;color:#b91c1c;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">NOT FOUND</span>'
+            badge = '<span style="background:#fee2e2;color:#b91c1c;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.4px">NO MATCH</span>'
 
         matched_codes = _esc(r["matched_codes"]) if r["matched_codes"] else "<span style='color:#94a3b8'>—</span>"
         matched_desc = _esc(r["matched_descriptions"]) if r["matched_descriptions"] else "<span style='color:#94a3b8'>—</span>"
@@ -409,7 +426,14 @@ def stream_classification(n_rows: int, n_workers: int):
                 elapsed = time.time() - start_time
 
                 status = result["match_status"]
-                tag = "RESOLVED " if status == "resolved" else ("NOT FOUND" if status == "not_found" else "ERROR    ")
+                if status == "resolved":
+                    tag = "RESOLVED "
+                elif status == "not_found_location":
+                    tag = "NO LOCATN"
+                elif status == "not_found_zone":
+                    tag = "NO MATCH "
+                else:
+                    tag = "ERROR    "
                 extra = f"  ->  {result['matched_codes']}" if result["matched_codes"] else ""
                 log_lines.append(f"  [{global_i:3d}/{total}] [{tag}] '{label}'{extra}")
 
