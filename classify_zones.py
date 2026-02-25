@@ -215,11 +215,30 @@ def classify_label(
 
 def _make_result(status: str, matched_codes: list[str], zones: list[dict]) -> dict:
     code_to_desc = {z["code"]: z["description"] for z in zones}
+    code_to_id   = {z["code"]: z["id"]          for z in zones}
     return {
-        "match_status": status,
-        "matched_codes": "|".join(matched_codes),
+        "match_status":         status,
+        "matched_codes":        "|".join(matched_codes),
         "matched_descriptions": "|".join(code_to_desc.get(c, "") for c in matched_codes),
+        "matched_ids":          [code_to_id[c] for c in matched_codes if c in code_to_id],
     }
+
+
+def make_fix_command(
+    status: str,
+    location_id: str,
+    label: str,
+    matched_ids: list,
+    matched_descriptions: str,
+) -> str:
+    loc = int(location_id)
+    if status == "resolved":
+        ids = [int(i) for i in matched_ids]
+        first_desc = matched_descriptions.split("|")[0] if matched_descriptions else label
+        return f'copy_zone({loc}, {ids}, "{label}", "{first_desc}", None)'
+    elif status == "not_found_zone":
+        return f'insert_zone({loc}, "{label}", "{label}")'
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +363,7 @@ def build_table_html(results: list) -> str:
 
         matched_codes = _esc(r["matched_codes"]) if r["matched_codes"] else "<span style='color:#94a3b8'>—</span>"
         matched_desc = _esc(r["matched_descriptions"]) if r["matched_descriptions"] else "<span style='color:#94a3b8'>—</span>"
+        fix_cmd = _esc(r.get("fix_command", "")) or "<span style='color:#94a3b8'>—</span>"
 
         rows_html += f"""
         <tr style="background:{row_bg};border-bottom:1px solid #f1f5f9">
@@ -353,6 +373,7 @@ def build_table_html(results: list) -> str:
           <td style="padding:10px 12px">{badge}</td>
           <td style="padding:10px 12px;font-family:monospace;font-size:12px;color:#1d4ed8">{matched_codes}</td>
           <td style="padding:10px 12px;font-size:12px;color:#334155">{matched_desc}</td>
+          <td style="padding:10px 12px;font-family:monospace;font-size:11px;color:#7c3aed;white-space:nowrap">{fix_cmd}</td>
         </tr>"""
 
     TH = "padding:11px 12px;text-align:left;font-size:12px;font-weight:600;letter-spacing:.5px;color:#ffffff"
@@ -367,6 +388,7 @@ def build_table_html(results: list) -> str:
         <th style="{TH}">STATUS</th>
         <th style="{TH}">MATCHED CODES</th>
         <th style="{TH}">MATCHED DESCRIPTIONS</th>
+        <th style="{TH}">FIX COMMAND</th>
       </tr>
     </thead>
     <tbody>{rows_html}</tbody>
@@ -437,6 +459,14 @@ def stream_classification(n_rows: int, n_workers: int):
                 extra = f"  ->  {result['matched_codes']}" if result["matched_codes"] else ""
                 log_lines.append(f"  [{global_i:3d}/{total}] [{tag}] '{label}'{extra}")
 
+                fix_command = make_fix_command(
+                    status,
+                    location_id,
+                    label,
+                    result.get("matched_ids", []),
+                    result["matched_descriptions"],
+                )
+
                 results.append(
                     {
                         "label": label,
@@ -445,6 +475,7 @@ def stream_classification(n_rows: int, n_workers: int):
                         "match_status": status,
                         "matched_codes": result["matched_codes"],
                         "matched_descriptions": result["matched_descriptions"],
+                        "fix_command": fix_command,
                     }
                 )
 
